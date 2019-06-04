@@ -21,26 +21,26 @@ from util import Log
 from neural_tangents import tangents
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', type=str, default='sinusoid', \
-    help='sinusoid or omniglot or miniimagenet')
+parser.add_argument('--dataset', type=str, default='sinusoid',
+                    help='sinusoid or omniglot or miniimagenet')
 parser.add_argument('--n_hidden_layer', type=int, default=2)
 parser.add_argument('--n_hidden_unit', type=int, default=1024)
 parser.add_argument('--activation', type=str, default='relu')
 parser.add_argument('--norm', type=str, default=None)
 # parser.add_argument('--outer_step_size', type=float, default=1e-3)
-# parser.add_argument('--outer_opt_alg', type=str, default='adam', \
-    # help='adam or sgd or momentum')
-parser.add_argument('--inner_opt_alg', type=str, default='momentum', \
-    help='sgd or momentum or adam')
-parser.add_argument('--inner_step_size', type=float, default=1e-2)
-parser.add_argument('--n_inner_step', type=int, default=1000)
+# parser.add_argument('--outer_opt_alg', type=str, default='adam',
+# help='adam or sgd or momentum')
+parser.add_argument('--inner_opt_alg', type=str, default='sgd',
+                    help='sgd or momentum or adam')
+parser.add_argument('--inner_step_size', type=float, default=1e-3)
+parser.add_argument('--n_inner_step', type=int, default=3000)
 # parser.add_argument('--task_batch_size', type=int, default=8)
 # parser.add_argument('--n_train_task', type=int, default=8*20000)
-parser.add_argument('--n_support', type=int, default=100)
+parser.add_argument('--n_support', type=int, default=200)
 parser.add_argument('--output_dir', type=str, default=os.path.expanduser('~/code/neural-tangents/output'))
 parser.add_argument('--exp_name', type=str, default='ntk-sinusoid')
-parser.add_argument('--run_name', type=str, default= datetime.datetime.now().strftime('%d-%m-%Y_%H:%M:%S:%f'))
-parser.add_argument('--n_repeat', type=int, default=10)
+parser.add_argument('--run_name', type=str, default=datetime.datetime.now().strftime('%d-%m-%Y_%H:%M:%S:%f'))
+parser.add_argument('--n_repeat', type=int, default=3)
 
 # derive additional args and serialize
 args = parser.parse_args()
@@ -54,10 +54,11 @@ viz.text(json.dumps(obj=vars(args), sort_keys=True, indent=4))
 
 for run in tqdm(range(args.n_repeat)):
     # build network
-    net_init, f = mlp(n_output=1, n_hidden_layer=args.n_hidden_layer, n_hidden_unit=args.n_hidden_unit, activation=args.activation, norm=args.norm)
+    net_init, f = mlp(n_output=1, n_hidden_layer=args.n_hidden_layer, n_hidden_unit=args.n_hidden_unit,
+                      activation=args.activation, norm=args.norm)
 
     # initialize network
-    key = random.PRNGKey(42)
+    key = random.PRNGKey(run)
     _, params = net_init(key, (-1, 1))
 
     # data
@@ -95,11 +96,13 @@ for run in tqdm(range(args.n_repeat)):
     # log object
     log = Log(['loss_train', 'loss_test', 'loss_train_lin', 'loss_test_lin', 'rmse_train', 'rmse_test', 'iteration'])
 
+
     def step(i, state, f, grad_loss):
         params = get_params(state)
         l_train = loss(f(params, x_train), y_train)
         l_test = loss(f(params, x_test), y_test)
         return opt_apply(i, grad_loss(params, x_train, y_train), state), l_train, l_test
+
 
     win_loss, win_rmse = None, None
     for i in tqdm(range(args.n_inner_step)):
@@ -117,26 +120,39 @@ for run in tqdm(range(args.n_repeat)):
         state_lin, l_train_lin, l_test_lin = step(i, state_lin, f_lin, grad_loss_lin)
 
         log.append([('iteration', i)])
-        log.append([('loss_train', l_train), ('loss_test', l_test), ('loss_train_lin', l_train_lin), ('loss_test_lin', l_test_lin)])
+        log.append([('loss_train', l_train), ('loss_test', l_test), ('loss_train_lin', l_train_lin),
+                    ('loss_test_lin', l_test_lin)])
         log.append([('rmse_train', rmse_train), ('rmse_test', rmse_test)])
 
         if (i + 1) % (args.n_inner_step // 100) == 0:
             if win_loss is None:
-                win_loss = viz.line(X=log['iteration'], Y=onp.stack([log['loss_train'], log['loss_test'], log['loss_train_lin'], log['loss_test_lin']], axis=1), \
-                    opts=dict(title='loss', xlabel='update', ylabel='half l2 loss', legend=['train', 'test', 'train_lin', 'test_lin'])
+                win_loss = viz.line(
+                    X=log['iteration'],
+                    Y=onp.stack([log['loss_train'], log['loss_test'], log['loss_train_lin'], log['loss_test_lin']],
+                                axis=1),
+                    opts=dict(title=f'run {run} loss',
+                              xlabel='update',
+                              ylabel='half l2 loss',
+                              legend=['train', 'test', 'train_lin', 'test_lin'])
                 )
             else:
-                viz.line(X=log['iteration'], Y=onp.stack([log['loss_train'], log['loss_test'], log['loss_train_lin'], log['loss_test_lin']], axis=1), \
-                    win=win_loss, update='replace'
-                )
+                viz.line(X=log['iteration'],
+                         Y=onp.stack([log['loss_train'], log['loss_test'], log['loss_train_lin'], log['loss_test_lin']],
+                                     axis=1),
+                         win=win_loss, update='replace'
+                         )
             if win_rmse is None:
-                win_rmse = viz.line(X=log['iteration'], Y=onp.stack([log['rmse_train'], log['rmse_test']], axis=1), \
-                    opts=dict(title='rmse between f and f_lin', xlabel='update', ylabel='rmse', legend=['train', 'test'])
-                )
+                win_rmse = viz.line(X=log['iteration'],
+                                    Y=onp.stack([log['rmse_train'], log['rmse_test']], axis=1),
+                                    opts=dict(title=f'run {run} rmse between f and f_lin',
+                                              xlabel='update',
+                                              ylabel='rmse',
+                                              legend=['train', 'test'])
+                                    )
             else:
-                viz.line(X=log['iteration'], Y=onp.stack([log['rmse_train'], log['rmse_test']], axis=1), \
-                    win=win_rmse, update='replace'
-                )
+                viz.line(X=log['iteration'], Y=onp.stack([log['rmse_train'], log['rmse_test']], axis=1),
+                         win=win_rmse, update='replace'
+                         )
 
         np_dir = os.path.join(args.log_dir, 'np')
         os.makedirs(np_dir, exist_ok=True)

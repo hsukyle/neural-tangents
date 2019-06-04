@@ -15,6 +15,8 @@ import wandb
 import argparse
 import ipdb
 import tqdm
+import datetime
+import json
 from visdom import Visdom
 
 parser = argparse.ArgumentParser()
@@ -34,13 +36,18 @@ parser.add_argument('--n_inner_step', type=int, default=1)
 parser.add_argument('--task_batch_size', type=int, default=8)
 parser.add_argument('--n_train_task', type=int, default=8*20000)
 parser.add_argument('--n_support', type=int, default=20)
-parser.add_argument('--log_dir', type=str, default=os.path.expanduser('~/code/neural-tangents/output'))
+parser.add_argument('--output_dir', type=str, default=os.path.expanduser('~/code/neural-tangents/output'))
+parser.add_argument('--exp_name', type=str, default='maml-sinusoid')
+parser.add_argument('--run_name', type=str, default= datetime.datetime.now().strftime('%d-%m-%Y_%H:%M:%S:%f'))
 # parser.add_argument('--wandb_sync', type=bool, default=True)
 
 args = parser.parse_args()
+args.log_dir = os.path.join(args.output_dir, args.exp_name, args.run_name)
+os.makedirs(args.log_dir, exist_ok=True)
 
-viz = Visdom(port=8000, env='maml')
+json.dump(obj=vars(args), fp=open(os.path.join(args.log_dir, 'config.json'), 'w'), sort_keys=True, indent=4)
 
+viz = Visdom(port=8000, env=f'{args.exp_name}_{args.run_name}')
 # if not args.wandb_sync:
 #     os.environ['WANDB_MODE'] = 'dryrun'
 # wandb.init(project='neural-tangents', dir=args.log_dir)
@@ -127,3 +134,7 @@ for i in range(1, 5):
 # plt.savefig(fname=os.path.join(output_dir, 'sinusoid_maml_inference.png'))
 # wandb.log({'sinusoid_inference_maml': wandb.Image(plt)})
 # plt.close()
+
+np_dir = os.path.join(args.log_dir, 'np')
+os.makedirs(np_dir)
+onp.save(file=os.path.join(np_dir, 'loss'), arr=loss_np)

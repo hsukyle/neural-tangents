@@ -14,6 +14,8 @@ import numpy as onp
 import wandb
 import argparse
 import ipdb
+import tqdm
+from visdom import Visdom
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default='sinusoid', \
@@ -37,10 +39,12 @@ parser.add_argument('--log_dir', type=str, default=os.path.expanduser('~/code/ne
 
 args = parser.parse_args()
 
+viz = Visdom(port=8000, env='maml')
+
 # if not args.wandb_sync:
 #     os.environ['WANDB_MODE'] = 'dryrun'
-wandb.init(project='neural-tangents', dir=args.log_dir)
-wandb.config.update(args)
+# wandb.init(project='neural-tangents', dir=args.log_dir)
+# wandb.config.update(args)
 
 net_init, net_fn = mlp(n_output=1, n_hidden_layer=args.n_hidden_layer, n_hidden_unit=args.n_hidden_unit, activation=args.activation, norm=args.norm)
 
@@ -83,20 +87,33 @@ rng = random.PRNGKey(42)
 _, net_params = net_init(rng, (-1, 1))
 opt_state = opt_init(net_params)
 
-for i, task_batch in enumerate(taskbatch(sinusoid_task, batch_size=args.task_batch_size, n_task=args.n_train_task, n_support=args.n_support)):
+loss_np = onp.array([]) # faster to use onp here, maybe because jax.np uses GPU
+iter_np = onp.array([])
+win_loss = viz.line(np.array([-1]), np.array([-1]), opts=dict(
+    title='maml loss', xlabel=f'updates ({args.task_batch_size} tasks per)', ylabel='mse'
+))
+for i, task_batch in tqdm.tqdm(enumerate(taskbatch(sinusoid_task, batch_size=args.task_batch_size, n_task=args.n_train_task, n_support=args.n_support))):
     opt_state, l = step(i, opt_state, 
         (task_batch['x_train'], task_batch['y_train'], task_batch['x_test'], task_batch['y_test'])
     )
-    wandb.log({'iteration': onp.asarray(i), 'loss': onp.asarray(l)})
-    if i % 1000 == 0:
+    # wandb.log({'iteration': onp.array(i), 'loss': onp.array(l)})
+    loss_np = onp.append(loss_np, onp.array(l))
+    iter_np = onp.append(iter_np, onp.array(i))
+    if (i+1) % 1000 == 0:
+        viz.line(loss_np, iter_np, win=win_loss, update='replace')
         print(f"iteration {i}:\tmaml loss: {l}")
 
 net_params = get_params(opt_state)
 xrange_inputs = np.linspace(-5, 5, 100).reshape(-1, 1)
 targets = np.sin(xrange_inputs)
 predictions = net_fn(net_params, xrange_inputs)
-plt.plot(xrange_inputs, predictions, label='pre-update predictions')
-plt.plot(xrange_inputs, targets, label='target')
+
+win_inference = viz.line(targets, xrange_inputs, name='target', opts=dict(
+    title='sinusoid inference', xlabel='x', ylabel='y'
+))
+viz.line(predictions, xrange_inputs, win=win_inference, update='append', name='pre-update predictions')
+# plt.plot(xrange_inputs, predictions, label='pre-update predictions')
+# plt.plot(xrange_inputs, targets, label='target')
 
 x1 = onp.random.uniform(low=-5., high=5., size=(args.n_support,1))
 y1 = 1. * onp.sin(x1 + 0.)
@@ -104,8 +121,9 @@ y1 = 1. * onp.sin(x1 + 0.)
 for i in range(1, 5):
     net_params = inner_update(net_params, x1, y1, inner_step_size=args.inner_step_size, n_inner_step=1)
     predictions = net_fn(net_params, xrange_inputs)
-    plt.plot(xrange_inputs, predictions, label='{}-step predictions'.format(i))
-plt.legend()
+    # plt.plot(xrange_inputs, predictions, label='{}-step predictions'.format(i))
+    viz.line(predictions, xrange_inputs, win=win_inference, update='append', name=f'{i}-step predictions')
+# plt.legend()
 # plt.savefig(fname=os.path.join(output_dir, 'sinusoid_maml_inference.png'))
-wandb.log({'sinusoid_inference_maml': wandb.Image(plt)})
-plt.close()
+# wandb.log({'sinusoid_inference_maml': wandb.Image(plt)})
+# plt.close()

@@ -17,7 +17,7 @@ import ipdb
 import tqdm
 import datetime
 import json
-from visdom import Visdom
+from visdom_example import Visdom
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default='sinusoid', \
@@ -125,7 +125,7 @@ viz.line(predictions, xrange_inputs, win=win_inference, update='append', name='p
 x1 = onp.random.uniform(low=-5., high=5., size=(args.n_support,1))
 y1 = 1. * onp.sin(x1 + 0.)
 
-for i in range(1, 5):
+for i in range(1, 3):
     net_params = inner_update(net_params, x1, y1, inner_step_size=args.inner_step_size, n_inner_step=1)
     predictions = net_fn(net_params, xrange_inputs)
     # plt.plot(xrange_inputs, predictions, label='{}-step predictions'.format(i))

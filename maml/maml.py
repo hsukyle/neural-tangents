@@ -17,7 +17,7 @@ import ipdb
 import tqdm
 import datetime
 import json
-from visdom_example import Visdom
+from visdom import Visdom
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default='sinusoid', \

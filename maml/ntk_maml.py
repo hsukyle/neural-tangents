@@ -1,7 +1,5 @@
 import jax.numpy as np
 from jax import random
-from jax.experimental import optimizers
-from jax.tree_util import tree_multimap
 from jax import jit, grad, vmap
 
 from functools import partial
@@ -22,7 +20,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default='sinusoid',
                     help='sinusoid or omniglot or miniimagenet')
 parser.add_argument('--n_hidden_layer', type=int, default=2)
-parser.add_argument('--n_hidden_unit', type=int, default=40)
+parser.add_argument('--n_hidden_unit', type=int, default=49)
 parser.add_argument('--bias_coef', type=float, default=1.0)
 parser.add_argument('--activation', type=str, default='relu')
 parser.add_argument('--norm', type=str, default=None)
@@ -33,12 +31,12 @@ parser.add_argument('--inner_opt_alg', type=str, default='sgd',
                     help='sgd or momentum or adam')
 parser.add_argument('--inner_step_size', type=float, default=5e-1)
 parser.add_argument('--n_inner_step', type=int, default=3)
-parser.add_argument('--task_batch_size', type=int, default=4)
-parser.add_argument('--n_train_task', type=int, default=40000)
-parser.add_argument('--n_support', type=int, default=50)
-parser.add_argument('--n_query', type=int, default=50)
+parser.add_argument('--task_batch_size', type=int, default=8)
+parser.add_argument('--n_train_task', type=int, default=80000)
+parser.add_argument('--n_support', type=int, default=20)
+parser.add_argument('--n_query', type=int, default=20)
 parser.add_argument('--output_dir', type=str, default=os.path.expanduser('~/code/neural-tangents/output'))
-parser.add_argument('--exp_name', type=str, default='exp005')
+parser.add_argument('--exp_name', type=str, default='exp006')
 parser.add_argument('--run_name', type=str, default=datetime.datetime.now().strftime('%d-%m-%Y_%H:%M:%S:%f'))
 parser.add_argument('--debug', action='store_true')
 
@@ -261,7 +259,7 @@ for i, task_batch in tqdm(enumerate(taskbatch(task_fn=sinusoid_task,
     log.append([(key, aux[key]) for key in all_plot_keys])
 
     if (i + 1) % (args.n_train_task // args.task_batch_size // 20) == 0:
-        plotter.line(
+        plotter.log_to_line(
             win_name='loss',
             log=log,
             plot_keys=win_loss_keys,
@@ -270,7 +268,7 @@ for i, task_batch in tqdm(enumerate(taskbatch(task_fn=sinusoid_task,
             ylabel='post-adaptation half l2 loss',
             X=log['update']
         )
-        plotter.line(
+        plotter.log_to_line(
             win_name='loss_eval',
             log=log,
             plot_keys=win_loss_eval_keys,
@@ -279,7 +277,7 @@ for i, task_batch in tqdm(enumerate(taskbatch(task_fn=sinusoid_task,
             ylabel='post-adaptation half l2 loss',
             X=log['update']
         )
-        plotter.line(
+        plotter.log_to_line(
             win_name='rmse',
             log=log,
             plot_keys=win_rmse_keys,
@@ -288,7 +286,7 @@ for i, task_batch in tqdm(enumerate(taskbatch(task_fn=sinusoid_task,
             ylabel='rmse',
             X=log['update']
         )
-        plotter.line(
+        plotter.log_to_line(
             win_name='rmse_eval',
             log=log,
             plot_keys=win_rmse_eval_keys,
@@ -304,24 +302,23 @@ params = outer_get_params(outer_state)
 params_lin = outer_get_params(outer_state_lin)
 xrange_inputs = np.linspace(-5, 5, 100).reshape(-1, 1)
 targets = np.sin(xrange_inputs)
-win_inference = viz.line(
+plotter.line(
+    win_name='inference',
     Y=targets,
     X=xrange_inputs,
     name='target',
-    opts=dict(title='nonlinear model sinusoid inference',
-              xlabel='x',
-              ylabel='y',
-              )
+    title='nonlinear model sinusoid inference',
+    xlabel='x',
+    ylabel='y',
 )
-
-win_inference_lin = viz.line(
+plotter.line(
+    win_name='inference_lin',
     Y=targets,
     X=xrange_inputs,
     name='target',
-    opts=dict(title='linear model sinusoid inference',
-              xlabel='x',
-              ylabel='y',
-              )
+    title='linear model sinusoid inference',
+    xlabel='x',
+    ylabel='y',
 )
 
 f_lin = tangents.linearize(f, params_lin)
@@ -329,9 +326,9 @@ grad_loss_lin = jit(grad(lambda p, x, y: loss(f_lin(p, x), y)))
 param_loss_lin = jit(lambda p, x, y: loss(f_lin(p, x), y))
 
 predictions = f(params, xrange_inputs)
-viz.line(Y=predictions, X=xrange_inputs, win=win_inference, update='append', name='pre-update predictions')
+plotter.line(win_name='inference', Y=predictions, X=xrange_inputs, name='pre-update predictions', update='append')
 predictions_lin = f_lin(params_lin, xrange_inputs)
-viz.line(Y=predictions_lin, X=xrange_inputs, win=win_inference_lin, update='append', name='pre-update predictions')
+plotter.line(win_name='inference_lin', Y=predictions_lin, X=xrange_inputs, name='pre-update predictions', update='append')
 
 x1 = onp.random.uniform(low=-5., high=5., size=(args.n_support, 1))
 y1 = 1. * onp.sin(x1 + 0.)
@@ -344,14 +341,16 @@ for i in range(1, args.n_inner_step + 1):
     state = inner_opt_update(i, g, state)
     p = inner_get_params(state)
     predictions = f(p, xrange_inputs)
-    viz.line(Y=predictions, X=xrange_inputs, win=win_inference, update='append', name=f'{i}-step predictions')
+    plotter.line(win_name='inference', Y=predictions, X=xrange_inputs, name=f'{i}-step predictions',
+                 update='append')
 
     p_lin = inner_get_params(state_lin)
     g_lin = grad_loss_lin(p_lin, x1, y1)
     state_lin = inner_opt_update(i, g_lin, state_lin)
     p_lin = inner_get_params(state_lin)
     predictions_lin = f_lin(p_lin, xrange_inputs)
-    viz.line(Y=predictions_lin, X=xrange_inputs, win=win_inference_lin, update='append', name=f'{i}-step predictions')
+    plotter.line(win_name='inference_lin', Y=predictions_lin, X=xrange_inputs, name=f'{i}-step predictions',
+                 update='append')
 
 # serialize
 np_dir = os.path.join(args.log_dir, 'np')

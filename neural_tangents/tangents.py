@@ -256,6 +256,9 @@ def analytic_mse_predictor(g_dd, y_train, g_td=None):
   inverse = onp.linalg.inv(g_dd)
   normalization = g_dd.shape[1]
 
+  import ipdb
+  ipdb.set_trace()
+
   def fl(fx):
     """Flatten outputs."""
     return np.reshape(fx, (-1,))
@@ -275,11 +278,22 @@ def analytic_mse_predictor(g_dd, y_train, g_td=None):
     return lambda fx, dt: \
         ufl(predict(fl(fx - y_train), dt), fx.shape[-1]) + y_train
 
+  # def predict_using_kernel(fx_train, fx_test, dt):
+  #   output_dim = fx_train.shape[-1]
+  #   gx_train = fl(fx_train - y_train)
+  #   dgx = predict(gx_train, dt) - gx_train
+  #   dfx = np.dot(inverse, dgx)
+  #   dfx = np.dot(g_td, dfx)
+  #   return ufl(dgx, output_dim) + fx_train, fx_test + ufl(dfx, output_dim)
+
   def predict_using_kernel(fx_train, fx_test, dt):
     output_dim = fx_train.shape[-1]
     gx_train = fl(fx_train - y_train)
-    dgx = predict(gx_train, dt) - gx_train
-    dfx = np.dot(inverse, dgx)
+    diff = predict(gx_train, dt) - gx_train
+    dgx = np.dot(inverse, diff)
+    dgx = np.dot(g_td, dgx)
+
+    dfx = np.dot(inverse, diff)
     dfx = np.dot(g_td, dfx)
     return ufl(dgx, output_dim) + fx_train, fx_test + ufl(dfx, output_dim)
 

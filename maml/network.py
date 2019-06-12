@@ -1,8 +1,8 @@
 from jax.experimental import stax
-from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
+from jax.experimental.stax import (AvgPool, BatchNorm, FanInSum,
                                    FanOut, Flatten, GeneralConv, Identity,
                                    MaxPool, Relu, Tanh, LogSoftmax)
-from neural_tangents import layers
+from neural_tangents.layers import Dense, Conv
 
 
 def denseActivationNormLayer(n_hidden_unit, bias_coef, activation, norm):
@@ -17,12 +17,12 @@ def denseActivationNormLayer(n_hidden_unit, bias_coef, activation, norm):
 
     if norm is None:
         return stax.serial(
-            layers.Dense(n_hidden_unit, b_gain=bias_coef),
+            Dense(n_hidden_unit, b_gain=bias_coef),
             activation
         )
     elif norm == 'batch_norm':
         return stax.serial(
-            layers.Dense(n_hidden_unit, b_gain=bias_coef),
+            Dense(n_hidden_unit, b_gain=bias_coef),
             activation,
             BatchNorm(axis=0)
         )
@@ -33,7 +33,7 @@ def denseActivationNormLayer(n_hidden_unit, bias_coef, activation, norm):
 def mlp(n_output, n_hidden_layer, n_hidden_unit, bias_coef, activation='relu', norm=None):
     return stax.serial(
         *[denseActivationNormLayer(n_hidden_unit, bias_coef, activation, norm) for i in range(n_hidden_layer)],
-        layers.Dense(n_output, b_gain=bias_coef)
+        Dense(n_output, b_gain=bias_coef)
     )
 
 

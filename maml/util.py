@@ -2,6 +2,7 @@ import numpy as onp
 from jax.experimental import optimizers
 from functools import partial
 
+
 class Log(dict):
     def __init__(self, keys):
         for key in keys:
@@ -29,13 +30,13 @@ class VisdomPlotter:
         self.viz = viz
         self.windows = {}
 
-    def line(self, win_name, log, plot_keys, title, xlabel, ylabel, X):
+    def log_to_line(self, win_name, log, plot_keys, title, xlabel, ylabel, X, width=800, height=600):
         Y = onp.stack([log[key] for key in plot_keys] +
                       [onp.convolve(log[key], [0.05] * 20, 'same') for key in plot_keys], axis=1)
         if win_name not in self.windows:
             self.windows[win_name] = self.viz.line(
                 X=X, Y=Y,
-                opts=dict(title=title, xlabel=xlabel, ylabel=ylabel,
+                opts=dict(title=title, xlabel=xlabel, ylabel=ylabel, width=width, height=height,
                           legend=plot_keys + [f'{key}_smooth' for key in plot_keys],
                           dash=onp.array(['dot' for i in range(len(plot_keys) * 2)])
                           )
@@ -43,4 +44,16 @@ class VisdomPlotter:
         else:
             self.viz.line(
                 X=X, Y=Y, win=self.windows[win_name], update='replace'
+            )
+
+    def line(self, win_name, Y, X, name, update=None, title=None, xlabel=None, ylabel=None, width=800, height=600):
+        if win_name not in self.windows:
+            self.windows[win_name] = self.viz.line(
+                X=X, Y=Y, name=name, opts=dict(
+                    title=title, xlabel=xlabel, ylabel=ylabel, width=width, height=height, showlegend=True
+                )
+            )
+        else:
+            self.viz.line(
+                X=X, Y=Y, name=name, win=self.windows[win_name], update=update
             )

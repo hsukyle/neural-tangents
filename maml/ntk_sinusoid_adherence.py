@@ -25,6 +25,7 @@ parser.add_argument('--dataset', type=str, default='sinusoid',
                     help='sinusoid or omniglot or miniimagenet')
 parser.add_argument('--n_hidden_layer', type=int, default=2)
 parser.add_argument('--n_hidden_unit', type=int, default=1024)
+parser.add_argument('--bias_coef', type=float, default=0)
 parser.add_argument('--activation', type=str, default='relu')
 parser.add_argument('--norm', type=str, default=None)
 # parser.add_argument('--outer_step_size', type=float, default=1e-3)
@@ -55,8 +56,12 @@ viz.text(json.dumps(obj=vars(args), sort_keys=True, indent=4))
 
 for run in tqdm(range(args.n_repeat)):
     # build network
-    net_init, f = mlp(n_output=1, n_hidden_layer=args.n_hidden_layer, n_hidden_unit=args.n_hidden_unit,
-                      activation=args.activation, norm=args.norm)
+    net_init, f = mlp(n_output=1,
+                      n_hidden_layer=args.n_hidden_layer,
+                      n_hidden_unit=args.n_hidden_unit,
+                      bias_coef=args.bias_coef,
+                      activation=args.activation,
+                      norm=args.norm)
 
     # initialize network
     key = random.PRNGKey(run)

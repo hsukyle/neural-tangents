@@ -15,14 +15,14 @@ from tqdm import tqdm
 import datetime
 import json
 from visdom import Visdom
-from util import Log, select_opt
+from util import Log, select_opt, VisdomPlotter
 from neural_tangents import tangents
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default='sinusoid',
                     help='sinusoid or omniglot or miniimagenet')
-parser.add_argument('--n_hidden_layer', type=int, default=8)
-parser.add_argument('--n_hidden_unit', type=int, default=1024)
+parser.add_argument('--n_hidden_layer', type=int, default=2)
+parser.add_argument('--n_hidden_unit', type=int, default=40)
 parser.add_argument('--bias_coef', type=float, default=1.0)
 parser.add_argument('--activation', type=str, default='relu')
 parser.add_argument('--norm', type=str, default=None)
@@ -31,14 +31,14 @@ parser.add_argument('--outer_opt_alg', type=str, default='adam',
                     help='adam or sgd or momentum')
 parser.add_argument('--inner_opt_alg', type=str, default='sgd',
                     help='sgd or momentum or adam')
-parser.add_argument('--inner_step_size', type=float, default=(5e-1)/3)
-parser.add_argument('--n_inner_step', type=int, default=3*3)
-parser.add_argument('--task_batch_size', type=int, default=1)
-parser.add_argument('--n_train_task', type=int, default=10000)
+parser.add_argument('--inner_step_size', type=float, default=5e-1)
+parser.add_argument('--n_inner_step', type=int, default=3)
+parser.add_argument('--task_batch_size', type=int, default=4)
+parser.add_argument('--n_train_task', type=int, default=40000)
 parser.add_argument('--n_support', type=int, default=50)
 parser.add_argument('--n_query', type=int, default=50)
 parser.add_argument('--output_dir', type=str, default=os.path.expanduser('~/code/neural-tangents/output'))
-parser.add_argument('--exp_name', type=str, default='exp004')
+parser.add_argument('--exp_name', type=str, default='exp005')
 parser.add_argument('--run_name', type=str, default=datetime.datetime.now().strftime('%d-%m-%Y_%H:%M:%S:%f'))
 parser.add_argument('--debug', action='store_true')
 
@@ -46,7 +46,6 @@ parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
 if args.debug:
     args.run_name = 'debug'
-assert args.task_batch_size == 1
 args.log_dir = os.path.join(args.output_dir, args.exp_name, args.run_name)
 os.makedirs(args.log_dir, exist_ok=True)
 json.dump(obj=vars(args), fp=open(os.path.join(args.log_dir, 'config.json'), 'w'), sort_keys=True, indent=4)
@@ -129,9 +128,16 @@ def maml_loss(params_init, task):
 
 
 @jit
-def outer_step(i, state, task):
+def maml_loss_batch(params_init, task_batch):
+    loss_test_batch, aux_batch = vmap(partial(maml_loss, params_init), in_axes=0)(task_batch)
+    aux = {key: np.mean(aux_batch[key]) for key in aux_batch}
+    return aux['loss_test'], aux
+
+
+@jit
+def outer_step(i, state, task_batch):
     params = outer_get_params(state)
-    g, aux = grad(maml_loss, has_aux=True)(params, task)
+    g, aux = grad(maml_loss_batch, has_aux=True)(params, task_batch)
     return outer_opt_update(i, g, state), aux
 
 
@@ -193,10 +199,16 @@ def maml_loss_lin(params_init, task):
 
 
 @jit
-def outer_step_lin(i, state, task):
+def maml_loss_lin_batch(params_init, task_batch):
+    loss_test_lin_batch, aux_batch = vmap(partial(maml_loss_lin, params_init), in_axes=0)(task_batch)
+    aux = {key: np.mean(aux_batch[key]) for key in aux_batch}
+    return aux['loss_test_lin'], aux
+
+
+@jit
+def outer_step_lin(i, state, task_batch):
     params = outer_get_params(state)
-    # g, aux = grad(maml_loss, has_aux=True)(params, task)
-    g, aux = grad(maml_loss_lin, has_aux=True)(params, task)
+    g, aux = grad(maml_loss_lin_batch, has_aux=True)(params, task_batch)
     return outer_opt_update(i, g, state), aux
 
 
@@ -214,29 +226,6 @@ outer_state_lin = outer_opt_init(params)
 
 rmse = jit(lambda fx, fx_lin: np.sqrt(np.mean(fx - fx_lin) ** 2))
 
-
-class VisdomPlotter:
-    def __init__(self, viz):
-        self.viz = viz
-        self.windows = {}
-
-    def line(self, win_name, log, plot_keys, title, xlabel, ylabel, X):
-        Y = onp.stack([log[key] for key in plot_keys] +
-                      [onp.convolve(log[key], [0.05] * 20, 'same') for key in plot_keys], axis=1)
-        if win_name not in self.windows:
-            self.windows[win_name] = self.viz.line(
-                X=X, Y=Y,
-                opts=dict(title=title, xlabel=xlabel, ylabel=ylabel,
-                          legend=plot_keys + [f'{key}_smooth' for key in plot_keys],
-                          dash=onp.array(['dot' for i in range(len(plot_keys) * 2)])
-                          )
-            )
-        else:
-            self.viz.line(
-                X=X, Y=Y, win=self.windows[win_name], update='replace'
-            )
-
-
 plotter = VisdomPlotter(viz)
 
 for i, task_batch in tqdm(enumerate(taskbatch(task_fn=sinusoid_task,
@@ -247,17 +236,19 @@ for i, task_batch in tqdm(enumerate(taskbatch(task_fn=sinusoid_task,
     outer_state, aux_nonlin = outer_step(
         i=i,
         state=outer_state,
-        task=(task_batch['x_train'],
-              task_batch['y_train'],
-              task_batch['x_test'],
-              task_batch['y_test']))
+        task_batch=(
+            task_batch['x_train'],
+            task_batch['y_train'],
+            task_batch['x_test'],
+            task_batch['y_test']))
     outer_state_lin, aux_lin = outer_step_lin(
         i=i,
         state=outer_state_lin,
-        task=(task_batch['x_train'],
-              task_batch['y_train'],
-              task_batch['x_test'],
-              task_batch['y_test']))
+        task_batch=(
+            task_batch['x_train'],
+            task_batch['y_train'],
+            task_batch['x_test'],
+            task_batch['y_test']))
 
     aux = {**aux_nonlin, **aux_lin}
     assert (len(aux.keys()) == len(aux_nonlin.keys()) + len(aux_lin.keys()))

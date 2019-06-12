@@ -22,3 +22,25 @@ def select_opt(name, step_size):
     else:
         raise ValueError
     return optimizer
+
+
+class VisdomPlotter:
+    def __init__(self, viz):
+        self.viz = viz
+        self.windows = {}
+
+    def line(self, win_name, log, plot_keys, title, xlabel, ylabel, X):
+        Y = onp.stack([log[key] for key in plot_keys] +
+                      [onp.convolve(log[key], [0.05] * 20, 'same') for key in plot_keys], axis=1)
+        if win_name not in self.windows:
+            self.windows[win_name] = self.viz.line(
+                X=X, Y=Y,
+                opts=dict(title=title, xlabel=xlabel, ylabel=ylabel,
+                          legend=plot_keys + [f'{key}_smooth' for key in plot_keys],
+                          dash=onp.array(['dot' for i in range(len(plot_keys) * 2)])
+                          )
+            )
+        else:
+            self.viz.line(
+                X=X, Y=Y, win=self.windows[win_name], update='replace'
+            )

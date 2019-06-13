@@ -4,6 +4,7 @@ from glob import glob
 import imageio
 import concurrent.futures
 from tqdm import tqdm
+import os
 from collections import defaultdict
 
 
@@ -110,7 +111,7 @@ def load_image(image_path):
     return imageio.imread(image_path), image_path
 
 
-def load_omniglot(root_dir='/h/kylehsu/datasets/omniglot/omniglot_28x28/', n_shot=5, n_query=15):
+def load_omniglot(root_dir='/h/kylehsu/datasets/omniglot/omniglot_28x28/', n_support=5, n_query=15):
     image_paths = glob(os.path.join(root_dir, '**', '*.png'), recursive=True)
 
     class_name_to_paths = defaultdict(list)
@@ -165,7 +166,7 @@ def load_omniglot(root_dir='/h/kylehsu/datasets/omniglot/omniglot_28x28/', n_sho
         splits = np.load(file=cache_path, allow_pickle=True).item()
 
     for split_name, split_dict in splits.items():
-        split_dict['partition'] = Partition(labels=split_dict['class_names'], n_shot=n_shot, n_query=n_query)
+        split_dict['partition'] = Partition(labels=split_dict['class_names'], n_shot=n_support, n_query=n_query)
         splits[split_name] = split_dict
 
     return splits
@@ -174,7 +175,6 @@ def load_omniglot(root_dir='/h/kylehsu/datasets/omniglot/omniglot_28x28/', n_sho
 if __name__ == '__main__':
 
     import matplotlib.pyplot as plt
-    import os
     from visdom import Visdom
     import ipdb
 
@@ -223,7 +223,7 @@ if __name__ == '__main__':
 
         batch_size = 2
         for i, batch in enumerate(taskbatch(omniglot_task, batch_size=batch_size, n_task=batch_size,
-                                            split_dict=splits['train'], n_way=n_way, n_support=n_support,
+                                            split_dict=splits['val'], n_way=n_way, n_support=n_support,
                                             n_query=n_query)):
 
             for i_task in range(batch_size):

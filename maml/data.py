@@ -52,15 +52,21 @@ def omniglot_task(split_dict, n_way, n_support, n_query=None):
 
         x_train.append(x[:n_support])
         x_test.append(x[n_support:])
-        y_train.append(i * np.ones(n_support))
-        y_test.append(i * np.ones(n_query))
+        y_train.append(i * np.ones(n_support, dtype='int'))
+        y_test.append(i * np.ones(n_query, dtype='int'))
 
     x_train = np.concatenate(x_train, axis=0)
     x_test = np.concatenate(x_test, axis=0)
-    y_train = np.concatenate(y_train, axis=0)
-    y_test = np.concatenate(y_test, axis=0)
+    y_train_int = np.concatenate(y_train, axis=0)
+    y_test_int = np.concatenate(y_test, axis=0)
 
-    return dict(x_train=x_train, y_train=y_train, x_test=x_test, y_test=y_test)
+    assert y_train_int.ndim == y_test_int.ndim == 1
+    y_train_one_hot = np.zeros([*y_train_int.shape, n_way])
+    y_train_one_hot[np.arange(y_train_int.shape[0]), y_train_int] = 1
+    y_test_one_hot = np.zeros([*y_test_int.shape, n_way])
+    y_test_one_hot[np.arange(y_test_int.shape[0]), y_test_int] = 1
+
+    return dict(x_train=x_train, y_train=y_train_one_hot, x_test=x_test, y_test=y_test_one_hot)
 
 
 def taskbatch(task_fn, batch_size, n_task, **task_fn_kwargs):
@@ -230,7 +236,7 @@ if __name__ == '__main__':
                            nrow=n_support)
                 viz.text(f'y_train: {y_train}')
                 viz.images(tensor=np.transpose(x_test, (0, 3, 1, 2)),
-                           nrow=n_support)
+                           nrow=n_query)
                 viz.text(f'y_test: {y_test}')
 
 

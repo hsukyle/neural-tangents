@@ -44,19 +44,21 @@ def omniglot_task(split_dict, n_way, n_support, n_query=None):
     images, partition = split_dict['images'], split_dict['partition']
 
     sampled_subset_ids = np.random.choice(partition.subset_ids, size=n_way, replace=False)
-    x_train, x_test = [], []
-    for subset_id in sampled_subset_ids:
+    x_train, y_train, x_test, y_test = [], [], [], []
+    for i, subset_id in enumerate(sampled_subset_ids):
         indices = np.random.choice(partition[subset_id], n_support + n_query, replace=False)
         x = images[indices]
         x = 1.0 - x.astype(np.float32) / 255.0  # invert black and white
 
         x_train.append(x[:n_support])
         x_test.append(x[n_support:])
+        y_train.append(i * np.ones(n_support))
+        y_test.append(i * np.ones(n_query))
 
-    x_train = np.stack(x_train, axis=0)
-    x_test = np.stack(x_test, axis=0)
-    y_train = np.broadcast_to(np.arange(n_way), shape=(n_support, n_way)).T
-    y_test = np.broadcast_to(np.arange(n_way), shape=(n_query, n_way)).T
+    x_train = np.concatenate(x_train, axis=0)
+    x_test = np.concatenate(x_test, axis=0)
+    y_train = np.concatenate(y_train, axis=0)
+    y_test = np.concatenate(y_test, axis=0)
 
     return dict(x_train=x_train, y_train=y_train, x_test=x_test, y_test=y_test)
 
@@ -107,7 +109,7 @@ def load_omniglot(root_dir='/h/kylehsu/datasets/omniglot/omniglot_28x28/', n_sho
 
     class_name_to_paths = defaultdict(list)
 
-    for image_path in tqdm(image_paths):
+    for image_path in image_paths:
         class_name = os.path.join(*image_path.split('/')[-3:-1])
         class_name_to_paths[class_name].append(image_path)
 
@@ -209,11 +211,14 @@ if __name__ == '__main__':
     def test_omniglot():
         viz = Visdom(port=8000, env='main')
         splits = load_omniglot()
+
+        n_way, n_support, n_query = 3, 5, 7
         # task = omniglot_task(splits['train'], n_way=3, n_support=5, n_query=7)
 
         batch_size = 2
         for i, batch in enumerate(taskbatch(omniglot_task, batch_size=batch_size, n_task=batch_size,
-                                            split_dict=splits['train'], n_way=3, n_support=5, n_query=7)):
+                                            split_dict=splits['train'], n_way=n_way, n_support=n_support,
+                                            n_query=n_query)):
 
             for i_task in range(batch_size):
                 x_train = batch['x_train'][i_task]
@@ -221,16 +226,13 @@ if __name__ == '__main__':
                 y_train = batch['y_train'][i_task]
                 y_test = batch['y_test'][i_task]
 
-                for i_class in range(x_train.shape[0]):
-                    viz.images(tensor=np.transpose(x_train[i_class], (0, 3, 1, 2)),
-                               nrow=x_train.shape[2],
-                               opts=dict(caption=f'class {i_class} label {y_train[i_class][0]} train'))
-                
-                for i_class in range(x_test.shape[0]):
-                    viz.images(tensor=np.transpose(x_test[i_class], (0, 3, 1, 2)),
-                               nrow=x_test.shape[2],
-                               opts=dict(caption=f'class {i_class} label {y_test[i_class][0]} test'))
-                    
+                viz.images(tensor=np.transpose(x_train, (0, 3, 1, 2)),
+                           nrow=n_support)
+                viz.text(f'y_train: {y_train}')
+                viz.images(tensor=np.transpose(x_test, (0, 3, 1, 2)),
+                           nrow=n_support)
+                viz.text(f'y_test: {y_test}')
+
 
     test_omniglot()
     # test_taskbatch()

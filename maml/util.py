@@ -30,16 +30,21 @@ class VisdomPlotter:
         self.viz = viz
         self.windows = {}
 
-    def log_to_line(self, win_name, log, plot_keys, title, xlabel, ylabel, X, width=800, height=600):
-        Y = onp.stack([log[key] for key in plot_keys] +
-                      [onp.convolve(log[key], [0.05] * 20, 'same') for key in plot_keys], axis=1)
+    def log_to_line(self, win_name, log, plot_keys, title, xlabel, ylabel, X, width=800, height=600, plot_smooth=False):
+        if plot_smooth:
+            Y = onp.stack([log[key] for key in plot_keys] +
+                          [onp.convolve(log[key], [0.1] * 10, 'same') for key in plot_keys], axis=1)
+            legend = plot_keys + [f'{key}_smooth' for key in plot_keys]
+            dash = onp.array(['dot' for i in range(len(plot_keys) * 2)])
+        else:
+            Y = onp.stack([log[key] for key in plot_keys], axis=1)
+            legend = plot_keys
+            dash = onp.array(['dot' for i in range(len(plot_keys))])
         if win_name not in self.windows:
             self.windows[win_name] = self.viz.line(
                 X=X, Y=Y,
                 opts=dict(title=title, xlabel=xlabel, ylabel=ylabel, width=width, height=height,
-                          legend=plot_keys + [f'{key}_smooth' for key in plot_keys],
-                          dash=onp.array(['dot' for i in range(len(plot_keys) * 2)])
-                          )
+                          legend=legend, dash=dash)
             )
         else:
             self.viz.line(

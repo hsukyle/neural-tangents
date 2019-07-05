@@ -3,6 +3,7 @@ from jax import random
 from jax.experimental import optimizers
 from jax.tree_util import tree_multimap
 from jax import jit, grad, vmap
+from jax.experimental.stax import logsoftmax
 
 from functools import partial
 from network import mlp, conv_net
@@ -30,8 +31,8 @@ parser.add_argument('--outer_opt_alg', type=str, default='adam',
                     help='adam or sgd or momentum')
 parser.add_argument('--inner_opt_alg', type=str, default='sgd',
                     help='sgd or momentum or adam')
-parser.add_argument('--inner_step_size', type=float, default=5e0)
-parser.add_argument('--n_inner_step', type=int, default=1)
+parser.add_argument('--inner_step_size', type=float, default=5e0/2)
+parser.add_argument('--n_inner_step', type=int, default=1*2)
 parser.add_argument('--task_batch_size', type=int, default=16)
 parser.add_argument('--n_train_task', type=int, default=16*10000)
 parser.add_argument('--n_way', type=int, default=5)
@@ -80,8 +81,8 @@ else:
 if args.dataset == 'sinusoid':
     loss = lambda fx, y_hat: 0.5 * np.mean((fx - y_hat) ** 2)
 elif args.dataset == 'omniglot':
-    loss = lambda logits, targets: -np.sum(logits * targets) / targets.shape[0]
-    acc = lambda logits, targets: np.mean(np.argmax(logits, axis=-1) == np.argmax(targets, axis=-1))
+    loss = lambda fx, targets: -np.sum(logsoftmax(fx) * targets) / targets.shape[0]
+    acc = lambda fx, targets: np.mean(np.argmax(logsoftmax(fx), axis=-1) == np.argmax(targets, axis=-1))
     param_acc = jit(lambda p, x, y: acc(f(p, x), y))
 else:
     raise ValueError

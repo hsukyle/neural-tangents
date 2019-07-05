@@ -24,6 +24,40 @@ class Partition(object):
         return self.partition[key]
 
 
+def circle_task(n_way, n_support, n_query=None):
+    if n_query is None:
+        n_query = n_support
+
+    theta_offset = np.random.uniform(low=0, high=2*np.pi)
+    theta_centers = np.linspace(start=0, stop=2*np.pi, num=n_way, endpoint=False) + theta_offset
+    np.random.shuffle(theta_centers)
+
+    theta_half_range = 2 * np.pi / (2 * n_way) * 0.8  # enforce a margin to make the task easier
+
+    x_train, y_train, x_test, y_test = [], [], [], []
+    for i, theta_center in enumerate(theta_centers):
+        thetas = np.random.uniform(low=theta_center-theta_half_range, high=theta_center+theta_half_range, size=(n_support + n_query, 1))
+        x = np.concatenate([np.cos(thetas), np.sin(thetas)], axis=1)
+        x_train.append(x[:n_support])
+        x_test.append(x[n_support:])
+        y_train.append(i * np.ones(n_support, dtype=np.int))
+        y_test.append(i * np.ones(n_query, dtype=np.int))
+
+    x_train = np.concatenate(x_train, axis=0)
+    x_test = np.concatenate(x_test, axis=0)
+    y_train_int = np.concatenate(y_train, axis=0)
+    y_test_int = np.concatenate(y_test, axis=0)
+
+    assert y_train_int.ndim == y_test_int.ndim == 1
+    y_train_one_hot = np.zeros([*y_train_int.shape, n_way])
+    y_train_one_hot[np.arange(y_train_int.shape[0]), y_train_int] = 1
+    y_test_one_hot = np.zeros([*y_test_int.shape, n_way])
+    y_test_one_hot[np.arange(y_test_int.shape[0]), y_test_int] = 1
+
+    return dict(x_train=x_train, y_train=y_train_one_hot, x_test=x_test, y_test=y_test_one_hot,
+                theta_centers=theta_centers, theta_half_range=theta_half_range)
+
+
 def sinusoid_task(n_support, n_query=None, amp_range=[0.1, 5.0], phase_range=[0.0, np.pi], input_range=[-5.0, 5.0]):
     if n_query is None:
         n_query = n_support
@@ -239,6 +273,26 @@ if __name__ == '__main__':
                            nrow=n_query)
                 viz.text(f'y_test: {y_test}')
 
+        viz.save(viz.get_env_list())
 
-    test_omniglot()
+
+    def test_circle():
+        viz = Visdom(port=8000, env='circle')
+
+        for i in range(10):
+            task = circle_task(n_way=3, n_support=5, n_query=7)
+
+            viz.scatter(
+                X=task['x_train'], Y=np.argmax(task['y_train'], axis=1) + 1,
+                opts=dict(title=f'task {i}: train')
+            )
+            viz.scatter(
+                X=task['x_test'], Y=np.argmax(task['y_test'], axis=1) + 1,
+                opts=dict(title=f'task {i}: test')
+            )
+        viz.save(viz.get_env_list())
+
+
+    # test_omniglot()
     # test_taskbatch()
+    test_circle()

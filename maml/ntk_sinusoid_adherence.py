@@ -79,6 +79,8 @@ for run in tqdm(range(args.n_repeat)):
     g_dd = theta(params, x_train)
     g_td = theta(params, x_test, x_train)
     predictor = tangents.analytic_mse_predictor(g_dd, y_train, g_td)
+    import ipdb
+    ipdb.set_trace()
 
     # Get initial values of the network in function space.
     fx_train_ana_init = f(params, x_train)

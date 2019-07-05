@@ -76,7 +76,7 @@ def conv_net(n_output, n_conv_layer, n_filter, bias_coef, activation='relu', nor
         ) for i in range(n_conv_layer)],
         Flatten,
         Dense(n_output, b_gain=bias_coef),
-        LogSoftmax
+        # LogSoftmax
     )
 
 
@@ -89,7 +89,7 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
     import os
     import ipdb
-
+    from jax.experimental.stax import logsoftmax
 
     def sinusoid():
 
@@ -139,7 +139,8 @@ if __name__ == '__main__':
         def loss(params, batch):
             inputs, targets = batch
             logits = f(params, inputs)
-            return -np.sum(logits * targets) / targets.shape[0]
+            outputs = logsoftmax(logits)
+            return -np.sum(outputs * targets) / targets.shape[0]
 
         def accuracy(params, batch):
             inputs, targets = batch

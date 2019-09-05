@@ -6,6 +6,7 @@ import concurrent.futures
 from tqdm import tqdm
 import os
 from collections import defaultdict
+import ipdb
 
 
 class Partition(object):
@@ -58,7 +59,8 @@ def circle_task(n_way, n_support, n_query=None):
                 theta_centers=theta_centers, theta_half_range=theta_half_range)
 
 
-def sinusoid_task(n_support, n_query=None, amp_range=[0.1, 5.0], phase_range=[0.0, np.pi], input_range=[-5.0, 5.0]):
+def sinusoid_task(n_support, n_query=None, amp_range=[0.1, 5.0], phase_range=[0.0, np.pi], input_range=[-5.0, 5.0],
+                  noise_std=0.1):
     if n_query is None:
         n_query = n_support
 
@@ -66,10 +68,20 @@ def sinusoid_task(n_support, n_query=None, amp_range=[0.1, 5.0], phase_range=[0.
     phase = np.random.uniform(low=phase_range[0], high=phase_range[1])
 
     inputs = np.random.uniform(low=input_range[0], high=input_range[1], size=(n_support + n_query, 1))
-    targets = amp * np.sin(inputs - phase)
+    noise = np.random.normal(loc=0.0, scale=noise_std, size=inputs.shape)
+    targets = amp * np.sin(inputs - phase) + noise
 
-    return dict(x_train=inputs[:n_support], y_train=targets[:n_support], x_test=inputs[n_support:],
-                y_test=targets[n_support:], amp=amp, phase=phase)
+    x_train = inputs[:n_support]
+    y_train = targets[:n_support]
+    x_test = inputs[n_support:]
+    y_test = targets[n_support:]
+
+    # sort the training data for ntk visualization
+    p = np.argsort(x_train, axis=None)
+    x_train = x_train[p]
+    y_train = y_train[p]
+
+    return dict(x_train=x_train, y_train=y_train, x_test=x_test, y_test=y_test, amp=amp, phase=phase)
 
 
 def omniglot_task(split_dict, n_way, n_support, n_query=None):
@@ -292,7 +304,7 @@ if __name__ == '__main__':
             )
         viz.save(viz.get_env_list())
 
-
+    visualize_one_task()
     # test_omniglot()
     # test_taskbatch()
-    test_circle()
+    # test_circle()

@@ -2,7 +2,7 @@ import jax.numpy as np
 from jax import random
 from jax import jit, grad, vmap
 from jax.experimental.stax import logsoftmax, softmax
-from jax.tree_util import tree_flatten, tree_multimap
+from jax.tree_util import tree_flatten
 
 from functools import partial
 from network import mlp, conv_net
@@ -41,10 +41,9 @@ parser.add_argument('--n_way', type=int, default=5)
 parser.add_argument('--n_support', type=int, default=3)
 parser.add_argument('--n_query', type=int, default=15)
 parser.add_argument('--output_dir', type=str, default=os.path.expanduser('~/code/neural-tangents/output'))
-parser.add_argument('--exp_name', type=str, default='exp000')
+parser.add_argument('--exp_name', type=str, default='exp010')
 parser.add_argument('--run_name', type=str, default=datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S:%f'))
 parser.add_argument('--noise_std', type=float, default=0.0)
-parser.add_argument('--gradient_alignment_regularization', type=float, default=0.0)
 parser.add_argument('--debug', action='store_true')
 
 # derive additional args and serialize
@@ -167,13 +166,7 @@ def maml_loss(params_init, task):
         aux['acc_test'] = param_acc(p, x_test, y_test)
         aux['acc_train'] = param_acc(p, x_train, y_train)
 
-    # gradient alignment
-    g_train_init = np.concatenate(process_gradient(grad_loss(params_init, x_train, y_train)))
-    g_test_init = np.concatenate(process_gradient(grad_loss(params_init, x_test, y_test)))
-    alignment = np.dot(g_train_init, g_test_init) / np.linalg.norm(g_train_init) / np.linalg.norm(g_test_init)
-    loss_reg = args.gradient_alignment_regularization * alignment
-
-    return aux['loss_test'] + loss_reg, aux
+    return aux['loss_test'], aux
 
 
 @jit
@@ -188,10 +181,76 @@ def outer_step(i, state, task_batch):
     g, aux = grad(maml_loss_batch, has_aux=True)(params, task_batch)
     return outer_opt_update(i, g, state), aux
 
+
+def inner_optimization_lin(params_init, x_train, y_train, n_inner_step):
+    f_lin = tangents.linearize(f, params_init)
+    grad_loss_lin = jit(grad(lambda p, x, y: loss(f_lin(p, x), y)))
+    param_loss_lin = jit(lambda p, x, y: loss(f_lin(p, x), y))
+
+    state = inner_opt_init(params_init)
+    for i in range(n_inner_step):
+        p = inner_get_params(state)
+        g = grad_loss_lin(p, x_train, y_train)
+        state = inner_opt_update(i, g, state)
+    p = inner_get_params(state)
+    l_train = param_loss_lin(p, x_train, y_train)
+    return p, l_train, f_lin, param_loss_lin
+
+
+@jit
+def maml_loss_lin(params_init, task):
+    aux = {}
+    # evaluation task
+    p, aux['loss_train_eval_lin'], f_lin, param_loss_lin = inner_optimization_lin(
+        params_init, task_eval['x_train'], task_eval['y_train'], args.n_inner_step
+    )
+    aux['loss_test_eval_lin'] = param_loss_lin(p, task_eval['x_test'], task_eval['y_test'])
+    aux['fx_train_eval_adapt_lin'] = f_lin(p, task_eval['x_train'])
+    aux['fx_test_eval_adapt_lin'] = f_lin(p, task_eval['x_test'])
+    aux['fx_train_eval_init_lin'] = f_lin(params_init, task_eval['x_train'])
+    aux['fx_test_eval_init_lin'] = f_lin(params_init, task_eval['x_test'])
+    if args.dataset in ['omniglot', 'circle']:
+        aux['acc_test_eval_lin'] = param_acc(p, task_eval['x_test'], task_eval['y_test'])
+        aux['acc_train_eval_lin'] = param_acc(p, task_eval['x_train'], task_eval['y_train'])
+
+    # current task for MAML update
+    x_train, y_train, x_test, y_test = task
+    p, aux['loss_train_lin'], f_lin, param_loss_lin, = inner_optimization_lin(
+        params_init, x_train, y_train, args.n_inner_step
+    )
+    aux['loss_test_lin'] = param_loss_lin(p, x_test, y_test)
+    aux['fx_train_adapt_lin'] = f_lin(p, x_train)
+    aux['fx_test_adapt_lin'] = f_lin(p, x_test)
+    aux['fx_train_init_lin'] = f_lin(params_init, x_train)
+    aux['fx_test_init_lin'] = f_lin(params_init, x_test)
+    if args.dataset in ['omniglot', 'circle']:
+        aux['acc_test_lin'] = param_acc(p, x_test, y_test)
+        aux['acc_train_lin'] = param_acc(p, x_train, y_train)
+
+    return aux['loss_test_lin'], aux
+
+
+@jit
+def maml_loss_lin_batch(params_init, task_batch):
+    loss_test_lin_batch, aux = vmap(partial(maml_loss_lin, params_init), in_axes=0)(task_batch)
+    return np.mean(loss_test_lin_batch), aux
+
+
+@jit
+def outer_step_lin(i, state, task_batch):
+    params = outer_get_params(state)
+    g, aux = grad(maml_loss_lin_batch, has_aux=True)(params, task_batch)
+    return outer_opt_update(i, g, state), aux
+
+
 # logging, plotting
-win_loss_keys = ['loss_train', 'loss_test']
-win_loss_eval_keys = ['loss_train_eval', 'loss_test_eval']
-win_rank_eval_keys = ['ntk_train_rank_eval']
+win_loss_keys = ['loss_train', 'loss_test', 'loss_train_lin', 'loss_test_lin']
+win_loss_eval_keys = ['loss_train_eval', 'loss_test_eval', 'loss_train_eval_lin', 'loss_test_eval_lin']
+win_rmse_keys = ['rmse_train_adapt', 'rmse_test_adapt', 'rmse_train_init', 'rmse_test_init']
+win_rmse_eval_keys = ['rmse_train_eval_adapt', 'rmse_test_eval_adapt', 'rmse_train_eval_init', 'rmse_test_eval_init']
+win_tvd_keys = ['tvd_train_adapt', 'tvd_test_adapt', 'tvd_train_init', 'tvd_test_init']
+win_tvd_eval_keys = ['tvd_train_eval_adapt', 'tvd_test_eval_adapt', 'tvd_train_eval_init', 'tvd_test_eval_init']
+win_rank_eval_keys = ['ntk_train_rank_eval', 'ntk_train_rank_eval_lin']
 win_spectrum_eval_keys = [f'ntk_spectrum_{i}_eval' for i in range(args.n_support * args.n_way ** 2)]
 win_spectrum_slope_keys = ['ntk_spectrum_log_log_slope']
 win_quadratic_keys = ['ntk_label_quadratic', 'ntk_inv_label_quadratic', 'ntk_label_quadratic_normalized']
@@ -199,15 +258,20 @@ win_cosine_keys = [f'ntk_evec_{i}_label_cosine' for i in range(args.n_support * 
 win_gradient_keys = [f'g_train_g_test_{i}' for i in range((args.n_hidden_layer + 1) * 2)] + \
     [f'g_train_g_test_normalized_{i}' for i in range((args.n_hidden_layer + 1) * 2)] + \
     ['g_train_g_test', 'g_train_g_test_normalized']
-every_iter_plot_keys = win_loss_keys + win_loss_eval_keys + win_gradient_keys
+every_iter_plot_keys = win_loss_keys + win_loss_eval_keys + win_rmse_keys + win_rmse_eval_keys + \
+    win_tvd_keys + win_tvd_eval_keys + win_gradient_keys
 if args.dataset in ['omniglot', 'circle']:
-    win_acc_keys = ['acc_train', 'acc_test']
-    win_acc_eval_keys = ['acc_train_eval', 'acc_test_eval']
+    win_acc_keys = ['acc_train', 'acc_test', 'acc_train_lin', 'acc_test_lin']
+    win_acc_eval_keys = ['acc_train_eval', 'acc_test_eval', 'acc_train_eval_lin', 'acc_test_eval_lin']
     every_iter_plot_keys = every_iter_plot_keys + win_acc_keys + win_acc_eval_keys
 log = Log(keys=['update'] + every_iter_plot_keys + win_rank_eval_keys + win_spectrum_eval_keys +
                win_spectrum_slope_keys + win_quadratic_keys + win_cosine_keys)
 
 outer_state = outer_opt_init(params)
+outer_state_lin = outer_opt_init(params)
+
+rmse = jit(lambda fx, fx_lin: np.sqrt(np.mean(fx - fx_lin) ** 2))
+tvd = jit(lambda fx, fx_lin: 0.5 * np.sum(np.abs(softmax(fx) - softmax(fx_lin))))
 
 plotter = VisdomPlotter(viz)
 
@@ -222,16 +286,18 @@ else:
 
 ntk_frequency = 50
 plot_update_frequency = 100
-total_iters = args.n_train_task // args.task_batch_size
 for i, task_batch in tqdm(enumerate(taskbatch(task_fn=task_fn,
                                               batch_size=args.task_batch_size,
                                               n_task=args.n_train_task)),
-                          total=total_iters):
+                          total=args.n_train_task // args.task_batch_size):
     aux = dict()
     # ntk
     if i == 0 or (i + 1) % (args.n_train_task // args.task_batch_size // ntk_frequency) == 0:
         ntk = tangents.ntk(f, batch_size=100)(outer_get_params(outer_state), task_eval['x_train'])
         aux['ntk_train_rank_eval'] = onp.linalg.matrix_rank(ntk)
+        f_lin = tangents.linearize(f, outer_get_params(outer_state_lin))
+        ntk_lin = tangents.ntk(f_lin, batch_size=100)(outer_get_params(outer_state_lin), task_eval['x_train'])
+        aux['ntk_train_rank_eval_lin'] = onp.linalg.matrix_rank(ntk_lin)
         log.append([(key, aux[key]) for key in win_rank_eval_keys])
 
         # spectrum
@@ -295,11 +361,27 @@ for i, task_batch in tqdm(enumerate(taskbatch(task_fn=task_fn,
             task_batch['y_train'],
             task_batch['x_test'],
             task_batch['y_test']))
-    aux = {**aux, **aux_nonlin}
+    outer_state_lin, aux_lin = outer_step_lin(
+        i=i,
+        state=outer_state_lin,
+        task_batch=(
+            task_batch['x_train'],
+            task_batch['y_train'],
+            task_batch['x_test'],
+            task_batch['y_test']))
+    assert len(set(aux_nonlin.keys()) & set(aux_lin.keys())) == 0
+
+    aux = {**aux, **aux_nonlin, **aux_lin}
+
+    # rmse and tvd calculation
+    for k in ['train_adapt', 'test_adapt', 'train_init', 'test_init',
+              'train_eval_adapt', 'test_eval_adapt', 'train_eval_init', 'test_eval_init']:
+        aux[f'rmse_{k}'] = vmap(rmse, in_axes=0)(aux[f'fx_{k}'], aux[f'fx_{k}_lin'])
+        aux[f'tvd_{k}'] = vmap(tvd, in_axes=0)(aux[f'fx_{k}'], aux[f'fx_{k}_lin'])
 
     # aggregate
     for (key, value) in aux.items():
-        if 'loss' in key or 'acc' in key:
+        if 'loss' in key or 'acc' in key or 'rmse' in key or 'tvd' in key:
             aux[key] = np.mean(value)
 
     log.append([('update', i)])
@@ -335,6 +417,46 @@ for i, task_batch in tqdm(enumerate(taskbatch(task_fn=task_fn,
             title=f'{title}, fixed evaluation task',
             xlabel='maml update',
             ylabel=f'post-adaptation {loss_ylabel}',
+            X=log['update'],
+            plot_smooth=True
+        )
+        plotter.log_to_line(
+            win_name='rmse',
+            log=log,
+            plot_keys=win_rmse_keys,
+            title='rmse between nonlinear and linear model outputs, meta-training tasks',
+            xlabel='maml update',
+            ylabel='rmse',
+            X=log['update'],
+            plot_smooth=True
+        )
+        plotter.log_to_line(
+            win_name='rmse_eval',
+            log=log,
+            plot_keys=win_rmse_eval_keys,
+            title='rmse between nonlinear and linear model outputs, fixed evaluation task',
+            xlabel='maml update',
+            ylabel='rmse',
+            X=log['update'],
+            plot_smooth=True
+        )
+        plotter.log_to_line(
+            win_name='tvd',
+            log=log,
+            plot_keys=win_tvd_keys,
+            title='tvd between nonlinear and linear model outputs, meta-training tasks',
+            xlabel='maml update',
+            ylabel='tvd',
+            X=log['update'],
+            plot_smooth=True
+        )
+        plotter.log_to_line(
+            win_name='tvd_eval',
+            log=log,
+            plot_keys=win_tvd_eval_keys,
+            title='tvd between nonlinear and linear model outputs, fixed evaluation task',
+            xlabel='maml update',
+            ylabel='tvd',
             X=log['update'],
             plot_smooth=True
         )
@@ -425,6 +547,8 @@ for i, task_batch in tqdm(enumerate(taskbatch(task_fn=task_fn,
         # fig, (axis1, axis2) = plt.subplots(2, 1)
         # axis1.matshow(onp.asarray(ntk))
         # axis1.set_title(f'ntk of f on x_train, iter {i}, fixed evaluation task')
+        # axis2.matshow(onp.asarray(ntk_lin))
+        # axis2.set_title(f'ntk of f_lin on x_train, iter {i}, fixed evaluation task')
         # viz.matplot(fig, opts=dict(width=800, height=600))
         # plt.close('all')
 
@@ -442,22 +566,22 @@ for i, task_batch in tqdm(enumerate(taskbatch(task_fn=task_fn,
         elif args.dataset == 'omniglot':
             ytickmin = -4
 
-        if i == 0 or i == total_iters - 1:
-            spectrum_plot = viz.scatter(
-                X=X, name='raw',
-                opts=dict(title=f'NTK spectrum, iter {i}, training data, fixed evaluation task', xtype='log', ytype='log',
-                          xlabel='index', ylabel='eigenvalue', width=800, height=600,
-                          ytickmin=ytickmin, ytickmax=3, showlegend=True)
-            )
+        spectrum_plot = viz.scatter(
+            X=X, name='raw',
+            opts=dict(title=f'NTK spectrum, iter {i}, training data, fixed evaluation task', xtype='log', ytype='log',
+                      xlabel='index', ylabel='eigenvalue', width=800, height=600,
+                      ytickmin=ytickmin, ytickmax=3, showlegend=True)
+        )
 
-            X_fit = onp.stack([ind, 10**(slope * onp.log10(ind) + intercept)], axis=1)
-            viz.line(Y=X_fit[:, 1], X=X_fit[:, 0], win=spectrum_plot, update='append',
-                     name=f'slope {slope:.3f}, intercept {intercept:.3f}')
+        X_fit = onp.stack([ind, 10**(slope * onp.log10(ind) + intercept)], axis=1)
+        viz.line(Y=X_fit[:, 1], X=X_fit[:, 0], win=spectrum_plot, update='append',
+                 name=f'slope {slope:.3f}, intercept {intercept:.3f}')
 
 
 # visualize models
 if args.dataset == 'sinusoid':
     params = outer_get_params(outer_state)
+    params_lin = outer_get_params(outer_state_lin)
     xrange_inputs = np.linspace(-5, 5, 100).reshape(-1, 1)
     targets = np.sin(xrange_inputs) + onp.random.normal(scale=args.noise_std, size=xrange_inputs.shape)
     plotter.line(
@@ -469,14 +593,31 @@ if args.dataset == 'sinusoid':
         xlabel='x',
         ylabel='y',
     )
+    plotter.line(
+        win_name='inference_lin',
+        Y=targets,
+        X=xrange_inputs,
+        name='target',
+        title='linear model sinusoid inference',
+        xlabel='x',
+        ylabel='y',
+    )
+
+    f_lin = tangents.linearize(f, params_lin)
+    grad_loss_lin = jit(grad(lambda p, x, y: loss(f_lin(p, x), y)))
+    param_loss_lin = jit(lambda p, x, y: loss(f_lin(p, x), y))
 
     predictions = f(params, xrange_inputs)
     plotter.line(win_name='inference', Y=predictions, X=xrange_inputs, name='pre-update predictions', update='append')
+    predictions_lin = f_lin(params_lin, xrange_inputs)
+    plotter.line(win_name='inference_lin', Y=predictions_lin, X=xrange_inputs, name='pre-update predictions',
+                 update='append')
 
     x1 = onp.random.uniform(low=-5., high=5., size=(args.n_support, 1))
     y1 = 1. * onp.sin(x1 + 0.)
 
     state = inner_opt_init(params)
+    state_lin = inner_opt_init(params_lin)
     for i in range(1, args.n_inner_step + 1):
         p = inner_get_params(state)
         g = grad_loss(p, x1, y1)
@@ -484,6 +625,14 @@ if args.dataset == 'sinusoid':
         p = inner_get_params(state)
         predictions = f(p, xrange_inputs)
         plotter.line(win_name='inference', Y=predictions, X=xrange_inputs, name=f'{i}-step predictions',
+                     update='append')
+
+        p_lin = inner_get_params(state_lin)
+        g_lin = grad_loss_lin(p_lin, x1, y1)
+        state_lin = inner_opt_update(i, g_lin, state_lin)
+        p_lin = inner_get_params(state_lin)
+        predictions_lin = f_lin(p_lin, xrange_inputs)
+        plotter.line(win_name='inference_lin', Y=predictions_lin, X=xrange_inputs, name=f'{i}-step predictions',
                      update='append')
 
 # serialize

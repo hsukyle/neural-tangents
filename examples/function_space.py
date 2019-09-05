@@ -66,6 +66,8 @@ def main(unused_argv):
   # Create an MSE predictor to solve the NTK equation in function space.
   theta = tangents.ntk(f, batch_size=32)
   g_dd = theta(params, x_train)
+  import ipdb
+  ipdb.set_trace()
   g_td = theta(params, x_test, x_train)
   predictor = tangents.analytic_mse_predictor(g_dd, y_train, g_td)
 

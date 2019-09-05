@@ -19,7 +19,7 @@ def select_opt(name, step_size):
     elif name == 'momentum':
         optimizer = partial(optimizers.momentum, step_size=step_size, mass=0.9)
     elif name == 'adam':
-        optimizer = partial(optimizers.adam, step_size=step_size)
+        optimizer = partial(optimizers.adam, step_size=step_size, b1=0.9, b2=0.999, eps=1e-8)
     else:
         raise ValueError
     return optimizer

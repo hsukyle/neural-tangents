@@ -48,7 +48,7 @@ def denseActivationNormLayer(n_hidden_unit, bias_coef, activation, norm):
             layer,
             BatchNorm(axis=0)
         )
-    elif norm is None or norm == 'None':
+    elif norm is None or norm == 'none':
         pass
     else:
         raise ValueError

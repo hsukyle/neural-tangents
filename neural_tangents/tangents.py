@@ -256,9 +256,6 @@ def analytic_mse_predictor(g_dd, y_train, g_td=None):
   inverse = onp.linalg.inv(g_dd)
   normalization = g_dd.shape[1]
 
-  import ipdb
-  ipdb.set_trace()
-
   def fl(fx):
     """Flatten outputs."""
     return np.reshape(fx, (-1,))
